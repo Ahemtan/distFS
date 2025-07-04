@@ -7,9 +7,9 @@ import (
 )
 
 func TestTcpTransport(t *testing.T) {
-	listenAddr := ":8080"
-	tr := NewTCPTransport(listenAddr)
-	assert.Equal(t, tr.listenAddress, listenAddr)
+	ListenAddr := ":8080"
+	tr := NewTCPTransport(TCPTransportOpts{ListnerAddr: ListenAddr})
+	assert.Equal(t, tr.ListnerAddr, ListenAddr)
 
 	assert.Nil(t, tr.ListenAndAccept())
 }
