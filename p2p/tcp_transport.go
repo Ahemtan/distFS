@@ -2,10 +2,7 @@ package p2p
 
 import (
 	"fmt"
-	"io"
 	"net"
-	"strings"
-	"sync"
 )
 
 type TCPPeer struct {
@@ -20,24 +17,32 @@ func NewRCPPeer(conn net.Conn, outBound bool) *TCPPeer {
 	}
 }
 
+func (p *TCPPeer) Close() error {
+	return p.conn.Close()
+}
+
 type TCPTransportOpts struct {
 	ListnerAddr   string
 	HandShakeFunc HandShakeFunc
 	Decoder       Decoder
+	OnPeer        func(Peer) error
 }
 
 type TCPTransport struct {
 	TCPTransportOpts
 	listner net.Listener
-
-	mu   sync.RWMutex
-	peer map[net.Addr]Peer
+	rpcch   chan RPC
 }
 
 func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
+		rpcch:            make(chan RPC),
 	}
+}
+
+func (t *TCPTransport) Consume() <-chan RPC {
+	return t.rpcch
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
@@ -70,29 +75,36 @@ func (t *TCPTransport) startAcceptLoop() {
 type Temp struct{}
 
 func (t *TCPTransport) handleConn(conn net.Conn) {
+	var err error
+
+	defer func() {
+		fmt.Printf("@TCP connection dropped: %s\n", err)
+		conn.Close()
+	}()
+
 	peer := NewRCPPeer(conn, true)
 
 	if err := t.HandShakeFunc(peer); err != nil {
-		fmt.Printf("@TCP handshake error")
-		conn.Close()
 		return
 	}
 
-	msg := &Message{}
+	if t.OnPeer != nil {
+		if err = t.OnPeer(peer); err != nil {
+			return
+		}
+	}
+
+	rpc := RPC{}
 
 	for {
-		if err := t.Decoder.Decoder(conn, msg); err != nil {
-			fmt.Printf("@TCP decode error: %s\n", err)
-			if err == io.EOF || strings.Contains(err.Error(), "connection was forcibly closed") {
-				conn.Close()
-				return
-			}
-			continue
+		err := t.Decoder.Decoder(conn, &rpc)
+
+		if err != net.ErrClosed {
+			return
 		}
 
-		msg.From = conn.RemoteAddr()
-
-		fmt.Printf("@TCP message: %+v\n", msg)
+		rpc.From = conn.RemoteAddr()
+		t.rpcch <- rpc
 	}
 
 }
